@@ -212,9 +212,14 @@ def create_trig_spiral_with_planes(radius=100.0, pitch=50.0, num_turns=4.0, amp=
         z = (t / (2 * math.pi)) * pitch  + 100
         
         points.append(rg.Point3d(x, y, z))
-        
+    
+    exit_point_start = rg.Point3d(points[-1].X, points[-1].Y, points[-1].Z + 10)
+    exit_point = rg.Point3d(exit_point_start.X, exit_point_start.Y + 200, points[-1].Z + 200)
+    points.append(exit_point_start)
+    points.append(exit_point)
     # 1. Create the interpolated 3D curve geometry
     curve_geom = rg.Curve.CreateInterpolatedCurve(points, 3)
+    
     
     # Safely add the curve to the document and get its reference ID
     if 'scriptcontext' in globals():
@@ -263,16 +268,16 @@ def create_trig_spiral_with_planes(radius=100.0, pitch=50.0, num_turns=4.0, amp=
     entry_point_start = rg.Point3d(0, points[0].Y, points[0].Z - 100)
     entry_plane_start = rg.Plane(entry_point_start, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
     
-    exit_point_start = rg.Point3d(0, points[-1].Y, points[-1].Z + 50)
-    exit_plane_end = rg.Plane(exit_point_start, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
-    exit_point = rg.Point3d(300, exit_point_start.Y, exit_point_start.Z)
-    exit_plane = rg.Plane(exit_point, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
+    # exit_point_start = rg.Point3d(0, points[-1].Y, points[-1].Z + 50)
+    # exit_plane_end = rg.Plane(exit_point_start, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
+    # exit_point = rg.Point3d(300, exit_point_start.Y, exit_point_start.Z)
+    # exit_plane = rg.Plane(exit_point, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
 
     
     planes_out.insert(0, entry_plane)  # Add the entry plane at the start of the list  
     planes_out.insert(1, entry_plane_start)  # Add the entry plane at the start of the list 
-    planes_out.append(exit_plane_end)
-    planes_out.append(exit_plane)  # Add the exit plane at the end of the list  
+    # planes_out.append(exit_plane_end)
+    # planes_out.append(exit_plane)  # Add the exit plane at the end of the list  
                 
     return curve_id, planes_out
 
