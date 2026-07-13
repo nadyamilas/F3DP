@@ -213,7 +213,7 @@ def create_trig_spiral_with_planes(radius=100.0, pitch=50.0, num_turns=4.0, amp=
         
         points.append(rg.Point3d(x, y, z))
     
-    exit_point_start = rg.Point3d(points[-1].X, points[-1].Y, points[-1].Z + 10)
+    exit_point_start = rg.Point3d(points[-1].X, points[-1].Y, points[-1].Z + 100)
     exit_point = rg.Point3d(exit_point_start.X, exit_point_start.Y + 200, points[-1].Z + 200)
     points.append(exit_point_start)
     points.append(exit_point)
