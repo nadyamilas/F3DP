@@ -23,6 +23,59 @@ def average_point(points):
     z = sum(p.z for p in points) / len(points)
     return Point(x, y, z)
 
+def create_print_circular_base(start_point, base_radius, base_curve_resolution):
+    """Create circular base for the print"""
+    if base_curve_resolution is None:
+        base_curve_resolution = 20
+    base_planes = []
+    
+    circumference = 2 * math.pi * base_radius
+    num = int(circumference / base_curve_resolution)
+    # alpha = (2 * math.pi) / num
+    
+    # for n in range(num):
+    #     x = math.sin(alpha * n) * base_radius + start_point.X
+    #     y = math.cos(alpha * n) * base_radius + start_point.Y
+    #     z = 0 + start_point.Z
+    #     base_planes.append(rg.Plane(rg.Point3d(x, y, z), rg.Vector3d(0, 0, 1)))
+    
+    for i in range(num):
+        t = (i / float(num)) * (1 * 2 * math.pi)
+        
+        current_radius = base_radius
+        
+        x = current_radius * math.cos(t) + start_point.X
+        y = current_radius * math.sin(t) + start_point.Y
+        z = (t / (2 * math.pi)) + start_point.Z
+        
+        base_planes.append(rg.Plane(rg.Point3d(x, y, z), rg.Vector3d(0, 0, 1)))
+    
+    return base_planes
+
+def create_print_entry(start_point, entry_safe_distance):
+    """Create entry planes of the print"""
+    entry_planes = []
+    
+    # entry_point = curve_planes[0].Origin
+    entry_plane = rg.Plane(start_point, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
+    entry_planes.append(entry_plane)
+    entry_planes.append(rg.Plane(rg.Point3d(start_point.X, start_point.Y, start_point.Z + entry_safe_distance), rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0)))
+    
+    return entry_planes
+
+def create_print_exit(end_plane, exit_direction, exit_safe_distance):
+    """Create exit planes of the print"""
+    if exit_direction == None or exit_safe_distance == None:
+        exit_safe_distance = 250
+        exit_direction = rg.Vector3d(exit_safe_distance, 0, 0)
+
+    exit_planes = []
+    exit_planes.append(rg.Plane(rg.Point3d(end_plane.Origin.X, end_plane.Origin.Y  + 20, end_plane.Origin.Z), rg.Vector3d(1, 0, 0), rg.Vector3d(0, 0, -1)))
+    exit_planes.append(rg.Plane(rg.Point3d(end_plane.Origin.X, end_plane.Origin.Y  + exit_safe_distance, end_plane.Origin.Z), rg.Vector3d(1, 0, 0), rg.Vector3d(0, 0, -1)))
+
+    return exit_planes
+    
+
 # --------------------------------------------------
 # Initilaze primal mesh
 # --------------------------------------------------
@@ -35,7 +88,6 @@ def create_mesh():
     edges = primal_mesh.edges(data=True)
 
     return primal_mesh, edges
-
 
 def exp_01(radius, num):
     """Experiment with spetial printing"""
@@ -90,7 +142,19 @@ def exp_03(radius, num):
     
     return mesh
 
-def create_trig_curve(type="sine", wavelength=10.0, amplitude=2.0, num_cycles=2, samples_per_cycle=20):
+def create_trig_curve(
+    start_point,
+    type="sine", 
+    wavelength=10.0, 
+    amplitude=2.0, 
+    num_cycles=2, 
+    curve_resolution=20, 
+    base_radius=100.0,
+    safe_distance=100.0,
+    coef=.04,
+    debug=False,
+    planar=False
+    ):
     """
     Generates a Sine or Cosine curve in Rhino and extracts manufacturing planes.
     
@@ -99,65 +163,62 @@ def create_trig_curve(type="sine", wavelength=10.0, amplitude=2.0, num_cycles=2,
     - wavelength: The length of one complete wave cycle along the X-axis
     - amplitude: The peak height of the wave along the Y-axis
     - num_cycles: How many full waves to draw
-    - samples_per_cycle: Controls the smoothness of the curve
+    - curve_resolution: Controls the smoothness of the curve
+    - safe_distance: Distance to keep from the curve for safe printing
     
     Returns:
     - tuple: (curve_id, planes_list)
     """
     points = []
+    curve_planes = []
+    planes_out = []
     
     # Calculate total points to plot
-    total_samples = int(num_cycles * samples_per_cycle)
+    total_samples = int(num_cycles * curve_resolution)
     total_length = wavelength * num_cycles
     
+    # 1. Generate print base
+    base_planes = create_print_circular_base(start_point, base_radius, base_curve_resolution=curve_resolution)
+    planes_out.extend(base_planes)
+    
+    # 2. Generate entry planes 
+    entry_planes = create_print_entry(start_point, entry_safe_distance=safe_distance)
+    planes_out.extend(entry_planes)
+    
+    entry_start_point = entry_planes[-1].Origin
+    
+    # 3. Generate the trig curve points
     for i in range(total_samples + 1):
         # Calculate X coordinate
-        x = (i / float(total_samples)) * total_length + 50
+        x = (i / float(total_samples)) * total_length
         
         # Calculate the angle in radians based on the current X position
         angle = (2 * math.pi * x) / wavelength
         
         # Calculate Y coordinate based on type
         if type.lower() == "cosine":
-            y = amplitude * math.cos(angle) + i*8
+            y = amplitude * math.cos(angle) * i * coef
         else:
-            y = amplitude * math.sin(angle) + i*8
+            y = amplitude * math.sin(angle) * i * coef
             
         # Z is kept at 0 for a flat 2D curve on the XY plane
         z = 0
         
-        # Note: Keeps your original mapping orientation coordinate arrangement
-        points.append(rg.Point3d(z, y, x))
+        points.append(rg.Point3d(z + entry_start_point.X, y + entry_start_point.Y, x + entry_start_point.Z + 20))
     
-    exit_point_start = rg.Point3d(points[-1].X, points[-1].Y, points[-1].Z + 100)
-    exit_point = rg.Point3d(exit_point_start.X, exit_point_start.Y + 200, points[-1].Z + 200)
-    points.append(exit_point_start)
-    points.append(exit_point)
-    
-    
-    # 1. Create and add the interpolated curve to the Rhino Document
+    # 4. Create and add the interpolated curve to the Rhino Document
     curve_geom = rg.Curve.CreateInterpolatedCurve(points, 3)
-    curve_id = rs.AddInterpCurve(points)
-    
-    # # 2. Extract Perpendicular Planes for the robot extruder
-    planes_out = []
     
     if curve_geom:
             t_params = curve_geom.DivideByCount(total_samples, True)
             for t_val in t_params:
                 rc, perp_plane = curve_geom.PerpendicularFrameAt(t_val)
                 if rc:
-                    # --- CRITICAL ROBOT ALIGNMENT FIX ---
-                    # Keep the exact location on the curve (Origin) 
-                    # Keep the exact direction of travel (Normal/ZAxis)
                     origin = perp_plane.Origin
                     z_axis = perp_plane.ZAxis  # This is the path direction
-                    
                     # Choose World X as our primary guide vector
                     world_guide = rg.Vector3d(1, 0, 0)
-                    
-                    # If the curve travels straight along World X, switch guide to World Y 
-                    # to prevent mathematical breakdown (cross product with parallel vectors = 0)
+                    # If the curve travels straight along World X, switch guide to World Y
                     if abs(z_axis.X) > 0.98:
                         world_guide = rg.Vector3d(0, 1, 0)
                     
@@ -171,82 +232,89 @@ def create_trig_curve(type="sine", wavelength=10.0, amplitude=2.0, num_cycles=2,
                     
                     # Construct the newly locked target plane
                     aligned_plane = rg.Plane(origin, local_x, local_y)
+                    if planar == True:
+                        aligned_plane = rg.Plane(origin, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
                     
-                    planes_out.append(aligned_plane)
+                    curve_planes.append(aligned_plane)
     
-    entry_point = rg.Point3d(0, 300, 10)
-    entry_plane = rg.Plane(entry_point, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
-    entry_point_start = rg.Point3d(0, points[0].Y, points[0].Z - 50)
-    entry_plane_start = rg.Plane(entry_point_start, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
+    planes_out.extend(curve_planes)
     
-    # exit_point_start = rg.Point3d(points[-1].X, points[-1].Y, points[-1].Z + 50)
-    # exit_plane_end = rg.Plane(exit_point_start, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
-    # exit_point = rg.Point3d(300, exit_point_start.Y, exit_point_start.Z)
-    # exit_plane = rg.Plane(exit_point, planes_out[-1].ZAxis, planes_out[-1].XAxis)
+    # 5. Generate exit planes
+    exit_planes = create_print_exit(curve_planes[-1], exit_direction=None, exit_safe_distance=None)
+    planes_out.extend(exit_planes)
     
-    # exit plane is the last plane in te list but moved for 300 in y directin
+    if debug:
+        return points, base_planes, curve_geom, curve_planes, planes_out
+    
+    return curve_geom, planes_out
 
-    
-    planes_out.insert(0, entry_plane)  # Add the entry plane at the start of the list  
-    planes_out.insert(1, entry_plane_start)  # Add the entry plane at the start of the list 
-    # planes_out.append(exit_plane_end)
-    # planes_out.append(exit_plane)  # Add the exit plane at the end of the list  
-    
-    return curve_id, planes_out
-
-
-def create_trig_spiral_with_planes(radius=100.0, pitch=50.0, num_turns=4.0, amp=5.0, freq=12.0, planes_num=20):
+def create_trig_spiral(
+    start_point, 
+    amplitude=2.0,
+    pitch=50.0, 
+    num_cycles=2, 
+    curve_resolution=20, 
+    base_radius=100.0,
+    safe_distance=100.0,
+    coef=.04,
+    planar=False,
+    debug=False
+    ):
     """
-    Generates a 3D Sine-modulated spiral curve and extracts accurate printing planes.
+    Generates a Sine or Cosine curve in Rhino and extracts manufacturing planes.
+    
+    Parameters:
+    - type: "sine" or "cosine"
+    - wavelength: The length of one complete wave cycle along the X-axis
+    - amplitude: The peak height of the wave along the Y-axis
+    - num_cycles: How many full waves to draw
+    - curve_resolution: Controls the smoothness of the curve
+    - safe_distance: Distance to keep from the curve for safe printing
+    
+    Returns:
+    - tuple: (curve_id, planes_list)
     """
     points = []
-    samples = int(num_turns * planes_num)
+    curve_planes = []
+    planes_out = []
     
-    for i in range(samples + 1):
-        t = (i / float(samples)) * (num_turns * 2 * math.pi)
+    # Calculate total points to plot
+    circumference = 2 * math.pi * base_radius
+    num = int(circumference / curve_resolution)
+    total_samples = int(num_cycles * (num))
+    print(num)
+    print(total_samples)
+    # total_samples = int(num_cycles * curve_resolution)
+    
+    # 1. Generate print base
+    base_planes = create_print_circular_base(start_point, base_radius, base_curve_resolution=curve_resolution)
+    planes_out.extend(base_planes)
+    
+    # 3. Generate the spiral curve points    
+    for i in range(total_samples):
+        t = (i / float(total_samples)) * (num_cycles * 2 * math.pi)
         
-        current_radius = radius + amp * math.sin(t * freq)
+        current_radius = base_radius
         
         x = current_radius * math.cos(t)
         y = current_radius * math.sin(t)
-        z = (t / (2 * math.pi)) * pitch  + 100
+        z = (t / (2 * math.pi)) * pitch + safe_distance 
         
-        points.append(rg.Point3d(x, y, z))
+        points.append(rg.Point3d(x + start_point.X, y + start_point.Y, z + start_point.Z))
     
-    exit_point_start = rg.Point3d(points[-1].X, points[-1].Y, points[-1].Z + 100)
-    exit_point = rg.Point3d(exit_point_start.X, exit_point_start.Y + 200, points[-1].Z + 200)
-    points.append(exit_point_start)
-    points.append(exit_point)
-    # 1. Create the interpolated 3D curve geometry
+    # 4. Create and add the interpolated curve to the Rhino Document
     curve_geom = rg.Curve.CreateInterpolatedCurve(points, 3)
-    
-    
-    # Safely add the curve to the document and get its reference ID
-    if 'scriptcontext' in globals():
-        import scriptcontext
-        curve_id = scriptcontext.doc.Objects.AddCurve(curve_geom)
-    else:
-        curve_id = rs.AddInterpCurve(points)
-    
-    # 2. Extract Perpendicular Planes for the robot tool vector
-    planes_out = []
-    
+            
     if curve_geom:
-            t_params = curve_geom.DivideByCount(samples, True)
+            t_params = curve_geom.DivideByCount(total_samples, True)
             for t_val in t_params:
                 rc, perp_plane = curve_geom.PerpendicularFrameAt(t_val)
                 if rc:
-                    # --- CRITICAL ROBOT ALIGNMENT FIX ---
-                    # Keep the exact location on the curve (Origin) 
-                    # Keep the exact direction of travel (Normal/ZAxis)
                     origin = perp_plane.Origin
                     z_axis = perp_plane.ZAxis  # This is the path direction
-                    
                     # Choose World X as our primary guide vector
                     world_guide = rg.Vector3d(1, 0, 0)
-                    
-                    # If the curve travels straight along World X, switch guide to World Y 
-                    # to prevent mathematical breakdown (cross product with parallel vectors = 0)
+                    # If the curve travels straight along World X, switch guide to World Y
                     if abs(z_axis.X) > 0.98:
                         world_guide = rg.Vector3d(0, 1, 0)
                     
@@ -260,135 +328,22 @@ def create_trig_spiral_with_planes(radius=100.0, pitch=50.0, num_turns=4.0, amp=
                     
                     # Construct the newly locked target plane
                     aligned_plane = rg.Plane(origin, local_x, local_y)
+                    if planar == True:
+                        aligned_plane = rg.Plane(origin, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
                     
-                    planes_out.append(aligned_plane)
+                    curve_planes.append(aligned_plane)
     
-    entry_point = rg.Point3d(0, 300, 10)
-    entry_plane = rg.Plane(entry_point, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
-    entry_point_start = rg.Point3d(0, points[0].Y, points[0].Z - 100)
-    entry_plane_start = rg.Plane(entry_point_start, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
+    planes_out.extend(curve_planes)
     
-    # exit_point_start = rg.Point3d(0, points[-1].Y, points[-1].Z + 50)
-    # exit_plane_end = rg.Plane(exit_point_start, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
-    # exit_point = rg.Point3d(300, exit_point_start.Y, exit_point_start.Z)
-    # exit_plane = rg.Plane(exit_point, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
+    # 5. Generate exit planes
+    exit_planes = create_print_exit(curve_planes[-1], exit_direction=None, exit_safe_distance=None)
+    planes_out.extend(exit_planes)
+    
+    if debug:
+        return points, base_planes, curve_geom, curve_planes, planes_out
+    
+    return curve_geom, planes_out, points, base_planes
 
-    
-    planes_out.insert(0, entry_plane)  # Add the entry plane at the start of the list  
-    planes_out.insert(1, entry_plane_start)  # Add the entry plane at the start of the list 
-    # planes_out.append(exit_plane_end)
-    # planes_out.append(exit_plane)  # Add the exit plane at the end of the list  
-                
-    return curve_id, planes_out
-
-
-# def create_vertical_spatial_bulb(target_height=400.0, amp=40.0, freq=4.0, samples=60, num=3, radius=100, spiral_turns=0.5):
-#     """
-#     Generates mid-air vertical printing curves that swell outwards horizontally,
-#     spiral around a central axis, and converge at a top apex tip.
-    
-#     Parameters:
-#     - target_height: The total vertical height (Z) where the apex point is located.
-#     - amp: Amplitude of the sine wave 'wiggle' along the strands.
-#     - freq: How many sine waves occur over the length of the strand.
-#     - num: Number of starting strands.
-#     - radius: Starting base radius from the center axis.
-#     - spiral_turns: How many times each curve loops around the structure (e.g., 0.5 = half a turn).
-#     """
-#     start_points = []
-#     alpha = (2 * math.pi) / num
-    
-#     # Generate symmetrical base anchor points automatically
-#     for n in range(num):
-#         x = math.sin(alpha * n) * radius
-#         y = math.cos(alpha * n) * radius
-#         z = 0 
-#         start_points.append(rg.Point3d(x, y, z))
-        
-#     center_x = sum(p.X for p in start_points) / float(len(start_points))
-#     center_y = sum(p.Y for p in start_points) / float(len(start_points))
-#     center_z = sum(p.Z for p in start_points) / float(len(start_points))
-    
-#     base_center = rg.Point3d(center_x, center_y, center_z)
-#     apex_point = rg.Point3d(base_center.X, base_center.Y, base_center.Z + target_height)
-    
-#     curves_out = []
-#     planes_out = []
-    
-#     for p in start_points:
-#         dx = p.X - base_center.X
-#         dy = p.Y - base_center.Y
-        
-#         start_radius = math.sqrt(dx**2 + dy**2)
-#         base_angle = math.atan2(dy, dx)
-        
-#         strand_points = []
-        
-#         for i in range(samples + 1):
-#             t = i / float(samples)
-            
-#             # Linear transition upward
-#             z = base_center.Z + (t * target_height)
-            
-#             # --- The Spiral Logic ---
-#             # As t increases, the angle steadily rotates around the center axis
-#             total_spiral_angle = spiral_turns * 2 * math.pi
-#             current_angle = base_angle + (t * total_spiral_angle)
-            
-#             # --- The Vertical Bulb Shape Envelope ---
-#             profile_envelope = math.sin(t * math.pi)
-#             current_radius = (start_radius * (1.0 - t)) + (amp * profile_envelope)
-            
-#             # Keep your secondary sine wiggles for spatial clay texturing
-#             current_radius += (amp * 0.3) * math.sin(t * freq * math.pi * 2)
-            
-#             # Map out coordinates on the horizontal XY plane with the updated winding angle
-#             x = base_center.X + current_radius * math.cos(current_angle)
-#             y = base_center.Y + current_radius * math.sin(current_angle)
-            
-#             strand_points.append(rg.Point3d(x, y, z))
-            
-#         # Ensure the last point snaps perfectly to the common top apex tip
-#         strand_points[-1] = apex_point
-        
-#         # Create geometry and extract printing alignment frames
-#         curve_geom = rg.Curve.CreateInterpolatedCurve(strand_points, 3)
-#         curve_id = rs.AddInterpCurve(strand_points)
-#         curves_out.append(curve_id)
-        
-#         if curve_geom:
-#             t_params = curve_geom.DivideByCount(samples, True)
-#             for t_val in t_params:
-#                 rc, perp_plane = curve_geom.PerpendicularFrameAt(t_val)
-#                 if rc:
-#                     # --- CRITICAL ROBOT ALIGNMENT FIX ---
-#                     # Keep the exact location on the curve (Origin) 
-#                     # Keep the exact direction of travel (Normal/ZAxis)
-#                     origin = perp_plane.Origin
-#                     z_axis = perp_plane.ZAxis  # This is the path direction
-                    
-#                     # Choose World X as our primary guide vector
-#                     world_guide = rg.Vector3d(1, 0, 0)
-                    
-#                     # If the curve travels straight along World X, switch guide to World Y 
-#                     # to prevent mathematical breakdown (cross product with parallel vectors = 0)
-#                     if abs(z_axis.X) > 0.98:
-#                         world_guide = rg.Vector3d(0, 1, 0)
-                    
-#                     # Compute a clean local Y-axis perpendicular to both the path and our world guide
-#                     local_y = rg.Vector3d.CrossProduct(z_axis, world_guide)
-#                     local_y.Unitize()
-                    
-#                     # Compute the final corrected local X-axis to complete the perpendicular system
-#                     local_x = rg.Vector3d.CrossProduct(local_y, z_axis)
-#                     local_x.Unitize()
-                    
-#                     # Construct the newly locked target plane
-#                     aligned_plane = rg.Plane(origin, local_x, local_y)
-                    
-#                     planes_out.append(aligned_plane)
-                    
-#     return curves_out, planes_out
 
 
 def create_vertical_spatial_bulb(target_height=400.0, amp=40.0, freq=4.0, samples=60, num=3, radius=100, spiral_turns=0.5):
