@@ -65,7 +65,7 @@ def move_l_blend(plane_to, accel, vel, blend_radius = 0):
     _pose_fmt = "p[" + ("%.4f,"*6)[:-1]+"]"
     _pose_fmt = _pose_fmt%tuple(_pose)
     # Format UR script
-    script = "movel(%s, a = %.2f, v = %.2f, r = %.4f)\n"%(_pose_fmt, accel, vel, blend_radius)
+    script = "movel(%s, a = %.2f, v = %.3f, r = %.4f)\n"%(_pose_fmt, accel, vel, blend_radius)
     return script
 
 def move_j(joints, accel, vel):

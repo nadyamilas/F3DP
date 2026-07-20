@@ -23,6 +23,125 @@ def average_point(points):
     z = sum(p.z for p in points) / len(points)
     return Point(x, y, z)
 
+def get_pivot_plane(planes_a, planes_b, origin):
+    """
+    Calculates the mathematically exact pivot (halfway) plane between two 
+    sets of planes by finding their intersection axis and splitting the rotation angle.
+    
+    Parameters:
+        planes_a (list): Starting planes
+        planes_b (list): Target planes
+    Returns:
+        list: The true pivot planes centered on the rotation hinge
+    """
+    pivot_planes = []
+
+    pa = planes_a
+    pb = planes_b
+
+    # 1. Find the intersection line (the physical pivot axis) between the two planes
+    rc, intersection_line = rg.Intersect.Intersection.PlanePlane(pa, pb)
+    
+    if rc:
+        # The intersection line acts as our physical hinge.
+        # We construct a new base plane centered on this line.
+        pivot_origin = intersection_line.PointAt(0.5) # Center point of intersection
+        pivot_axis = intersection_line.UnitTangent
+        
+        # 2. Calculate the exact angle between the two plane normals
+        angle = rg.Vector3d.VectorAngle(pa.ZAxis, pb.ZAxis)
+        
+        # 3. Create the pivot plane by rotating Plane A halfway (angle / 2) 
+        # around the intersection axis line
+        half_angle = angle / 2.0
+        print(math.degrees(half_angle))
+        
+        # Duplicate Plane A to preserve its original orientation style
+        pivot_plane = rg.Plane(pa)
+        
+        # Move its origin to the pivot axis center
+        pivot_plane.Origin = origin
+        
+        # Perform rotation around the physical line axis
+        rotation_transform = rg.Transform.Rotation(-half_angle, pivot_axis, origin)
+        pivot_plane.Transform(rotation_transform)
+        
+        # Force standard clean orthogonality
+        pivot_plane.XAxis.Unitize()
+        pivot_plane.YAxis.Unitize()
+        
+        pivot_planes.append(pivot_plane)
+    else:
+        # Fallback: If planes are perfectly parallel, there is no intersection line.
+        # We simply average the positions and maintain original orientation.
+        mid_origin = (pa.Origin + pb.Origin) * 0.5
+        fallback_plane = rg.Plane(pa)
+        fallback_plane.Origin = mid_origin
+        pivot_planes.append(fallback_plane)
+            
+    return pivot_plane
+
+def get_pivot_planes(planes_a, planes_b, segments=2):
+    """
+    Calculates the mathematically exact pivot (halfway) planes between two 
+    sets of planes by finding their intersection axis and splitting the rotation angle.
+    
+    Parameters:
+        planes_a (list): Starting planes
+        planes_b (list): Target planes
+    Returns:
+        list: The true pivot planes centered on the rotation hinge
+    """
+    pivot_planes = []
+
+    pa = planes_a
+    pb = planes_b
+    
+    for i in range(segments-1):
+        step = (i + 1) * 1 / segments
+        origin = rg.Line(pa.Origin, pb.Origin).PointAt(step)
+        
+        # 1. Find the intersection line (the physical pivot axis) between the two planes
+        rc, intersection_line = rg.Intersect.Intersection.PlanePlane(pa, pb)
+    
+        if rc:
+            # The intersection line acts as our physical hinge.
+            # We construct a new base plane centered on this line.
+            pivot_origin = intersection_line.PointAt(0.5) # Center point of intersection
+            pivot_axis = intersection_line.UnitTangent
+            
+            # 2. Calculate the exact angle between the two plane normals
+            angle = rg.Vector3d.VectorAngle(pa.ZAxis, pb.ZAxis)
+            
+            # 3. Create the pivot plane by rotating Plane A halfway (angle / 2) 
+            # around the intersection axis line
+            half_angle = angle * step
+            
+            # Duplicate Plane A to preserve its original orientation style
+            pivot_plane = rg.Plane(pa)
+            
+            # Move its origin to the pivot axis center
+            pivot_plane.Origin = origin
+            
+            # Perform rotation around the physical line axis
+            rotation_transform = rg.Transform.Rotation(-half_angle, pivot_axis, origin)
+            pivot_plane.Transform(rotation_transform)
+            
+            # Force standard clean orthogonality
+            pivot_plane.XAxis.Unitize()
+            pivot_plane.YAxis.Unitize()
+            
+            pivot_planes.append(pivot_plane)
+        else:
+            # Fallback: If planes are perfectly parallel, there is no intersection line.
+            # We simply average the positions and maintain original orientation.
+            mid_origin = (pa.Origin + pb.Origin) * 0.5
+            fallback_plane = rg.Plane(pa)
+            fallback_plane.Origin = mid_origin
+            pivot_planes.append(fallback_plane)
+
+    return pivot_planes
+
 def create_print_circular_base(start_point, base_radius, base_curve_resolution):
     """Create circular base for the print"""
     if base_curve_resolution is None:
@@ -61,18 +180,33 @@ def create_print_entry(start_point, entry_safe_distance):
     entry_planes.append(entry_plane)
     entry_planes.append(rg.Plane(rg.Point3d(start_point.X, start_point.Y, start_point.Z + entry_safe_distance), rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0)))
     
+    amount = len(entry_planes)
+    
     return entry_planes
 
-def create_print_exit(end_plane, exit_direction, exit_safe_distance):
+def create_print_exit(end_plane, exit_direction, exit_safe_distance, end_point):
     """Create exit planes of the print"""
     if exit_direction == None or exit_safe_distance == None:
-        exit_safe_distance = 250
+        exit_safe_distance = 400
         exit_direction = rg.Vector3d(exit_safe_distance, 0, 0)
 
+    end_pt = end_plane.Origin
     exit_planes = []
-    exit_planes.append(rg.Plane(rg.Point3d(end_plane.Origin.X, end_plane.Origin.Y  + 20, end_plane.Origin.Z), rg.Vector3d(1, 0, 0), rg.Vector3d(0, 0, -1)))
-    exit_planes.append(rg.Plane(rg.Point3d(end_plane.Origin.X, end_plane.Origin.Y  + exit_safe_distance, end_plane.Origin.Z), rg.Vector3d(1, 0, 0), rg.Vector3d(0, 0, -1)))
-
+    
+    # Exit plane side
+    exit_plane_side = rg.Plane(rg.Point3d(end_pt.X, end_pt.Y  + exit_safe_distance - 370, end_pt.Z), rg.Vector3d(1, 0, 0), rg.Vector3d(0, 0, -1))
+    exit_planes.extend(get_pivot_planes(end_plane, exit_plane_side, segments=1))
+    exit_planes.append(exit_plane_side)
+    
+    exit_plane_side = rg.Plane(rg.Point3d(exit_planes[-1].Origin.X, exit_planes[-1].Origin.Y + 300, exit_planes[-1].Origin.Z), rg.Vector3d(1, 0, 0), rg.Vector3d(0, 0, -1))
+    exit_planes.extend(get_pivot_planes(exit_planes[-1], exit_plane_side, segments=2))
+    exit_planes.append(exit_plane_side)
+    
+    # Final exit plane
+    exit_plane_bin = rg.Plane(end_point, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
+    exit_planes.extend(get_pivot_planes(exit_plane_side, exit_plane_bin, segments=1))
+    exit_planes.append(exit_plane_bin)
+    
     return exit_planes
     
 
@@ -144,6 +278,7 @@ def exp_03(radius, num):
 
 def create_trig_curve(
     start_point,
+    end_point,
     type="sine", 
     wavelength=10.0, 
     amplitude=2.0, 
@@ -152,8 +287,8 @@ def create_trig_curve(
     base_radius=100.0,
     safe_distance=100.0,
     coef=.04,
-    debug=False,
-    planar=False
+    mode="planar",
+    debug=False
     ):
     """
     Generates a Sine or Cosine curve in Rhino and extracts manufacturing planes.
@@ -170,7 +305,10 @@ def create_trig_curve(
     - tuple: (curve_id, planes_list)
     """
     points = []
+    entry_planes = []
     curve_planes = []
+    exit_planes = []
+    
     planes_out = []
     
     # Calculate total points to plot
@@ -179,13 +317,16 @@ def create_trig_curve(
     
     # 1. Generate print base
     base_planes = create_print_circular_base(start_point, base_radius, base_curve_resolution=curve_resolution)
-    planes_out.extend(base_planes)
+    entry_planes.extend(base_planes)
     
-    # 2. Generate entry planes 
-    entry_planes = create_print_entry(start_point, entry_safe_distance=safe_distance)
     planes_out.extend(entry_planes)
     
-    entry_start_point = entry_planes[-1].Origin
+    # 2. Generate entry planes 
+    safe_distance_planes = create_print_entry(start_point, entry_safe_distance=safe_distance)
+    planes_out.extend(safe_distance_planes)
+    
+    # amount = len(planes_out)
+    entry_start_point = planes_out[-1].Origin
     
     # 3. Generate the trig curve points
     for i in range(total_samples + 1):
@@ -232,32 +373,39 @@ def create_trig_curve(
                     
                     # Construct the newly locked target plane
                     aligned_plane = rg.Plane(origin, local_x, local_y)
-                    if planar == True:
+                    if mode == "planar":
                         aligned_plane = rg.Plane(origin, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
                     
                     curve_planes.append(aligned_plane)
     
+    if mode == "optimized":
+        optimized_planes = []
+        for plane in curve_planes:
+            planar_plane = rg.Plane(origin, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
+            optimized_plane = get_pivot_plane(plane, planar_plane, plane.Origin)
+            optimized_planes.append(optimized_plane)
+        curve_planes = optimized_planes
+            
     planes_out.extend(curve_planes)
     
     # 5. Generate exit planes
-    exit_planes = create_print_exit(curve_planes[-1], exit_direction=None, exit_safe_distance=None)
+    exit_planes = create_print_exit(curve_planes[-1], exit_direction=None, exit_safe_distance=None, end_point=end_point)
     planes_out.extend(exit_planes)
     
     if debug:
         return points, base_planes, curve_geom, curve_planes, planes_out
     
-    return curve_geom, planes_out
+    return curve_geom, entry_planes, curve_planes, exit_planes, planes_out
 
 def create_trig_spiral(
     start_point, 
-    amplitude=2.0,
+    end_point,
     pitch=50.0, 
     num_cycles=2, 
     curve_resolution=20, 
     base_radius=100.0,
-    safe_distance=100.0,
-    coef=.04,
-    planar=False,
+    safe_distance=50.0,
+    mode="planar",
     debug=False
     ):
     """
@@ -275,7 +423,10 @@ def create_trig_spiral(
     - tuple: (curve_id, planes_list)
     """
     points = []
+    entry_planes = []
     curve_planes = []
+    exit_planes = []
+    
     planes_out = []
     
     # Calculate total points to plot
@@ -288,7 +439,10 @@ def create_trig_spiral(
     
     # 1. Generate print base
     base_planes = create_print_circular_base(start_point, base_radius, base_curve_resolution=curve_resolution)
-    planes_out.extend(base_planes)
+    entry_planes.extend(base_planes)
+    
+    planes_out.extend(entry_planes)
+    amount = len(planes_out)
     
     # 3. Generate the spiral curve points    
     for i in range(total_samples):
@@ -328,294 +482,301 @@ def create_trig_spiral(
                     
                     # Construct the newly locked target plane
                     aligned_plane = rg.Plane(origin, local_x, local_y)
-                    if planar == True:
+                    if mode == "planar":
                         aligned_plane = rg.Plane(origin, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
                     
                     curve_planes.append(aligned_plane)
     
+    if mode == "optimized":
+        optimized_planes = []
+        for plane in curve_planes:
+            planar_plane = rg.Plane(origin, rg.Vector3d(1, 0, 0), rg.Vector3d(0, 1, 0))
+            optimized_plane = get_pivot_plane(plane, planar_plane, plane.Origin)
+            optimized_planes.append(optimized_plane)
+        curve_planes = optimized_planes
+    
     planes_out.extend(curve_planes)
     
     # 5. Generate exit planes
-    exit_planes = create_print_exit(curve_planes[-1], exit_direction=None, exit_safe_distance=None)
+    exit_planes = create_print_exit(curve_planes[-1], exit_direction=None, exit_safe_distance=None, end_point=end_point)
     planes_out.extend(exit_planes)
     
     if debug:
         return points, base_planes, curve_geom, curve_planes, planes_out
     
-    return curve_geom, planes_out, points, base_planes
+    return curve_geom, entry_planes, curve_planes, exit_planes, planes_out
 
 
 
-def create_vertical_spatial_bulb(target_height=400.0, amp=40.0, freq=4.0, samples=60, num=3, radius=100, spiral_turns=0.5):
-    """
-    Generates robotic toolpaths where approach, spiral, and exit fluidly form a single curve 
-    per strand, with tool orientation planes locked to the world X/Y grid.
-    """
-    start_points = []
-    alpha = (2 * math.pi) / num
+# def create_vertical_spatial_bulb(target_height=400.0, amp=40.0, freq=4.0, samples=60, num=3, radius=100, spiral_turns=0.5):
+#     """
+#     Generates robotic toolpaths where approach, spiral, and exit fluidly form a single curve 
+#     per strand, with tool orientation planes locked to the world X/Y grid.
+#     """
+#     start_points = []
+#     alpha = (2 * math.pi) / num
     
-    # Generate symmetrical base anchor points automatically
-    for n in range(num):
-        x = math.sin(alpha * n) * radius
-        y = math.cos(alpha * n) * radius
-        z = 0 
-        start_points.append(rg.Point3d(x, y, z))
+#     # Generate symmetrical base anchor points automatically
+#     for n in range(num):
+#         x = math.sin(alpha * n) * radius
+#         y = math.cos(alpha * n) * radius
+#         z = 0 
+#         start_points.append(rg.Point3d(x, y, z))
         
-    center_x = sum(p.X for p in start_points) / float(len(start_points))
-    center_y = sum(p.Y for p in start_points) / float(len(start_points))
-    center_z = sum(p.Z for p in start_points) / float(len(start_points))
-    base_center = rg.Point3d(center_x, center_y, center_z)
+#     center_x = sum(p.X for p in start_points) / float(len(start_points))
+#     center_y = sum(p.Y for p in start_points) / float(len(start_points))
+#     center_z = sum(p.Z for p in start_points) / float(len(start_points))
+#     base_center = rg.Point3d(center_x, center_y, center_z)
     
-    curves_out = []
-    planes_out = [] 
+#     curves_out = []
+#     planes_out = [] 
     
-    # Internal helper to maintain stable world-aligned robot orientations
-    def align_plane_to_world(origin, z_axis):
-        world_guide = rg.Vector3d(1, 0, 0)
-        if math.fabs(z_axis.X) > 0.98:
-            world_guide = rg.Vector3d(0, 1, 0)
-        local_y = rg.Vector3d.CrossProduct(z_axis, world_guide)
-        local_y.Unitize()
-        local_x = rg.Vector3d.CrossProduct(local_y, z_axis)
-        local_x.Unitize()
-        return rg.Plane(origin, local_x, local_y)
+#     # Internal helper to maintain stable world-aligned robot orientations
+#     def align_plane_to_world(origin, z_axis):
+#         world_guide = rg.Vector3d(1, 0, 0)
+#         if math.fabs(z_axis.X) > 0.98:
+#             world_guide = rg.Vector3d(0, 1, 0)
+#         local_y = rg.Vector3d.CrossProduct(z_axis, world_guide)
+#         local_y.Unitize()
+#         local_x = rg.Vector3d.CrossProduct(local_y, z_axis)
+#         local_x.Unitize()
+#         return rg.Plane(origin, local_x, local_y)
 
-    for p in start_points:
-        dx = p.X - base_center.X
-        dy = p.Y - base_center.Y
+#     for p in start_points:
+#         dx = p.X - base_center.X
+#         dy = p.Y - base_center.Y
         
-        start_radius = math.sqrt(dx**2 + dy**2)
-        base_angle = math.atan2(dy, dx)
+#         start_radius = math.sqrt(dx**2 + dy**2)
+#         base_angle = math.atan2(dy, dx)
         
-        # This will hold the entire seamless continuous toolpath sequence for this strand
-        all_strand_points = []
-        curve_points = []
-        # ---------------------------------------------------------
-        # PHASE 1: VERTICAL APPROACH POINTS (10cm Lift)
-        # ---------------------------------------------------------
-        # Straight vertical plunge coordinates down to the floor anchor point
-        for step in [1, 2, 3]:
-            approach_z = p.Z + (step * 40) 
-            all_strand_points.append(rg.Point3d(p.X, p.Y, approach_z))
+#         # This will hold the entire seamless continuous toolpath sequence for this strand
+#         all_strand_points = []
+#         curve_points = []
+#         # ---------------------------------------------------------
+#         # PHASE 1: VERTICAL APPROACH POINTS (10cm Lift)
+#         # ---------------------------------------------------------
+#         # Straight vertical plunge coordinates down to the floor anchor point
+#         for step in [1, 2, 3]:
+#             approach_z = p.Z + (step * 40) 
+#             all_strand_points.append(rg.Point3d(p.X, p.Y, approach_z))
         
-        curve_points.append(p)
+#         curve_points.append(p)
         
-        # ---------------------------------------------------------
-        # PHASE 2: SPIRAL SECTIONS (With Apex Space Clearance)
-        # ---------------------------------------------------------
-        spiral_points = []
-        for i in range(samples + 1):
-            t = i / float(samples)
-            z = base_center.Z + (t * target_height) + all_strand_points[-1].Z  # Offset by the last approach point's Z
+#         # ---------------------------------------------------------
+#         # PHASE 2: SPIRAL SECTIONS (With Apex Space Clearance)
+#         # ---------------------------------------------------------
+#         spiral_points = []
+#         for i in range(samples + 1):
+#             t = i / float(samples)
+#             z = base_center.Z + (t * target_height) + all_strand_points[-1].Z  # Offset by the last approach point's Z
             
-            total_spiral_angle = spiral_turns * 2 * math.pi
-            current_angle = base_angle + (t * total_spiral_angle)
+#             total_spiral_angle = spiral_turns * 2 * math.pi
+#             current_angle = base_angle + (t * total_spiral_angle)
             
-            profile_envelope = math.sin(t * math.pi)
+#             profile_envelope = math.sin(t * math.pi)
             
-            # Enforce 23mm spacing ring clear zone at crown apex
-            target_top_radius = 46
-            tapered_radius = (start_radius * (1.0 - t)) + (target_top_radius * t)
+#             # Enforce 23mm spacing ring clear zone at crown apex
+#             target_top_radius = 46
+#             tapered_radius = (start_radius * (1.0 - t)) + (target_top_radius * t)
             
-            current_radius = tapered_radius + (amp * profile_envelope)
-            current_radius += (amp * 0.3) * math.sin(t * freq * math.pi * 2)
+#             current_radius = tapered_radius + (amp * profile_envelope)
+#             current_radius += (amp * 0.3) * math.sin(t * freq * math.pi * 2)
             
-            x = base_center.X + current_radius * math.cos(current_angle)
-            y = base_center.Y + current_radius * math.sin(current_angle)
+#             x = base_center.X + current_radius * math.cos(current_angle)
+#             y = base_center.Y + current_radius * math.sin(current_angle)
             
-            spiral_points.append(rg.Point3d(x, y, z))
+#             spiral_points.append(rg.Point3d(x, y, z))
             
-        curve_points.extend(spiral_points)
+#         curve_points.extend(spiral_points)
         
-        # Build and add the main curve geometry to Rhino
-        curve_geom = rg.Curve.CreateInterpolatedCurve(curve_points, 3)
-        curve_id = rs.AddInterpCurve(curve_points)
-        curves_out.append(curve_id)
+#         # Build and add the main curve geometry to Rhino
+#         curve_geom = rg.Curve.CreateInterpolatedCurve(curve_points, 3)
+#         curve_id = rs.AddInterpCurve(curve_points)
+#         curves_out.append(curve_id)
         
-        # Extract aligned printing planes along the main path
-        if curve_geom:
-            total_divisions = len(curve_points) * 2
-            t_params = curve_geom.DivideByCount(total_divisions, True)
+#         # Extract aligned printing planes along the main path
+#         if curve_geom:
+#             total_divisions = len(curve_points) * 2
+#             t_params = curve_geom.DivideByCount(total_divisions, True)
             
-            for t_val in t_params:
-                # Get the actual localized vector direction of the curve pathway
-                tangent = curve_geom.TangentAt(t_val)
-                pt = curve_geom.PointAt(t_val)
+#             for t_val in t_params:
+#                 # Get the actual localized vector direction of the curve pathway
+#                 tangent = curve_geom.TangentAt(t_val)
+#                 pt = curve_geom.PointAt(t_val)
                 
-                # --- ANTIFLIP SECURITY SYSTEM ---
-                # Check the tangent vector direction against the path trajectory.
-                # During vertical approach, the curve goes down, so tangent points down (-Z).
-                # During the spiral, the curve travels up, so tangent points up (+Z).
-                # This guarantees plane coordinate frames never flip upside down randomly.
-                aligned_p = align_plane_to_world(pt, tangent)
-                planes_out.append(aligned_p)
+#                 # --- ANTIFLIP SECURITY SYSTEM ---
+#                 # Check the tangent vector direction against the path trajectory.
+#                 # During vertical approach, the curve goes down, so tangent points down (-Z).
+#                 # During the spiral, the curve travels up, so tangent points up (+Z).
+#                 # This guarantees plane coordinate frames never flip upside down randomly.
+#                 aligned_p = align_plane_to_world(pt, tangent)
+#                 planes_out.append(aligned_p)
         
-        # ---------------------------------------------------------
-        # PHASE 3: DYNAMIC EXIT PLANES (Targeting the Next Strand Start)
-        # ---------------------------------------------------------
-        if len(spiral_points) > 0:
-            top_pt = spiral_points[-1]
+#         # ---------------------------------------------------------
+#         # PHASE 3: DYNAMIC EXIT PLANES (Targeting the Next Strand Start)
+#         # ---------------------------------------------------------
+#         if len(spiral_points) > 0:
+#             top_pt = spiral_points[-1]
             
-            # Look ahead to locate the next target strand's start position
-            next_index = (n + 1) % num
-            next_base_pt = start_points[next_index]
-            next_approach_start = rg.Point3d(next_base_pt.X, next_base_pt.Y, next_base_pt.Z + 100.0)
+#             # Look ahead to locate the next target strand's start position
+#             next_index = (n + 1) % num
+#             next_base_pt = start_points[next_index]
+#             next_approach_start = rg.Point3d(next_base_pt.X, next_base_pt.Y, next_base_pt.Z + 100.0)
             
-            # Vector pointing straight towards the next start point
-            target_vector = next_approach_start - top_pt
+#             # Vector pointing straight towards the next start point
+#             target_vector = next_approach_start - top_pt
             
-            # Flatten completely to the horizontal plane to prevent diving or lifting
-            exit_dir = rg.Vector3d(target_vector.X, target_vector.Y, 0.0)
-            exit_dir.Unitize()
+#             # Flatten completely to the horizontal plane to prevent diving or lifting
+#             exit_dir = rg.Vector3d(target_vector.X, target_vector.Y, 0.0)
+#             exit_dir.Unitize()
             
-            # For the final strand, continue outward to safely clear the print area
-            if n == num - 1:
-                radial_vector = top_pt - base_center
-                exit_dir = rg.Vector3d(-radial_vector.X, -radial_vector.Y, 0.0)
-                exit_dir.Unitize()  
+#             # For the final strand, continue outward to safely clear the print area
+#             if n == num - 1:
+#                 radial_vector = top_pt - base_center
+#                 exit_dir = rg.Vector3d(-radial_vector.X, -radial_vector.Y, 0.0)
+#                 exit_dir.Unitize()  
             
-            # Generate stepping escape targets using consistent alignment logic
-            for step in [1, 2]:
-                exit_pt = top_pt + (exit_dir * (step * 150.0))
+#             # Generate stepping escape targets using consistent alignment logic
+#             for step in [1, 2]:
+#                 exit_pt = top_pt + (exit_dir * (step * 150.0))
                 
-                # FIXED: We pass the exit direction vector directly into the uniform matrix helper
-                # This guarantees that the X, Y, and Z orientations match the structural system
-                # used during the print path, preventing robot joint tracking errors.
-                exit_plane = align_plane_to_world(exit_pt, exit_dir)
-                planes_out.append(exit_plane)
+#                 # FIXED: We pass the exit direction vector directly into the uniform matrix helper
+#                 # This guarantees that the X, Y, and Z orientations match the structural system
+#                 # used during the print path, preventing robot joint tracking errors.
+#                 exit_plane = align_plane_to_world(exit_pt, exit_dir)
+#                 planes_out.append(exit_plane)
                     
-    return curves_out, planes_out
+#     return curves_out, planes_out
 
 
-
-def create_vertical_spatial_bulb(target_height=400.0, amp=40.0, freq=4.0, samples=60, num=3, radius=100, spiral_turns=0.5):
-    """
-    Generates spatially inclined robotic toolpaths. The paths lean outward in space 
-    while keeping the tool orientation Z-axis locked perfectly vertical.
-    """
-    start_points = []
-    alpha = (2 * math.pi) / num
+# def create_vertical_spatial_bulb(target_height=400.0, amp=40.0, freq=4.0, samples=60, num=3, radius=100, spiral_turns=0.5):
+#     """
+#     Generates spatially inclined robotic toolpaths. The paths lean outward in space 
+#     while keeping the tool orientation Z-axis locked perfectly vertical.
+#     """
+#     start_points = []
+#     alpha = (2 * math.pi) / num
     
-    # Generate symmetrical base anchor points automatically
-    for n in range(num):
-        x = math.sin(alpha * n) * radius
-        y = math.cos(alpha * n) * radius
-        z = 0 
-        start_points.append(rg.Point3d(x, y, z))
+#     # Generate symmetrical base anchor points automatically
+#     for n in range(num):
+#         x = math.sin(alpha * n) * radius
+#         y = math.cos(alpha * n) * radius
+#         z = 0 
+#         start_points.append(rg.Point3d(x, y, z))
         
-    center_x = sum(p.X for p in start_points) / float(len(start_points))
-    center_y = sum(p.Y for p in start_points) / float(len(start_points))
-    center_z = sum(p.Z for p in start_points) / float(len(start_points))
-    base_center = rg.Point3d(center_x, center_y, center_z)
+#     center_x = sum(p.X for p in start_points) / float(len(start_points))
+#     center_y = sum(p.Y for p in start_points) / float(len(start_points))
+#     center_z = sum(p.Z for p in start_points) / float(len(start_points))
+#     base_center = rg.Point3d(center_x, center_y, center_z)
     
-    curves_out = []
-    planes_out = [] 
+#     curves_out = []
+#     planes_out = [] 
     
-    # Internal helper to construct an upright plane locked to the World Z-axis
-    def build_upright_travel_plane(origin, travel_direction, fallback_direction):
-        z_axis = rg.Vector3d(0, 0, 1) # Forced vertical nozzle axis
+#     # Internal helper to construct an upright plane locked to the World Z-axis
+#     def build_upright_travel_plane(origin, travel_direction, fallback_direction):
+#         z_axis = rg.Vector3d(0, 0, 1) # Forced vertical nozzle axis
         
-        # Flatten the travel direction onto the horizontal XY plane
-        x_axis = rg.Vector3d(travel_direction.X, travel_direction.Y, 0.0)
+#         # Flatten the travel direction onto the horizontal XY plane
+#         x_axis = rg.Vector3d(travel_direction.X, travel_direction.Y, 0.0)
         
-        if x_axis.Length < 0.001:
-            x_axis = rg.Vector3d(fallback_direction.X, fallback_direction.Y, 0.0)
+#         if x_axis.Length < 0.001:
+#             x_axis = rg.Vector3d(fallback_direction.X, fallback_direction.Y, 0.0)
             
-        x_axis.Unitize()
+#         x_axis.Unitize()
         
-        # Calculate Y via cross product to keep the coordinate system squared
-        y_axis = rg.Vector3d.CrossProduct(z_axis, x_axis)
-        y_axis.Unitize()
+#         # Calculate Y via cross product to keep the coordinate system squared
+#         y_axis = rg.Vector3d.CrossProduct(z_axis, x_axis)
+#         y_axis.Unitize()
         
-        return rg.Plane(origin, x_axis, y_axis)
+#         return rg.Plane(origin, x_axis, y_axis)
 
-    for n in range(num):
-        p = start_points[n]
-        dx = p.X - base_center.X
-        dy = p.Y - base_center.Y
+#     for n in range(num):
+#         p = start_points[n]
+#         dx = p.X - base_center.X
+#         dy = p.Y - base_center.Y
         
-        start_radius = math.sqrt(dx**2 + dy**2)
-        base_angle = math.atan2(dy, dx)
+#         start_radius = math.sqrt(dx**2 + dy**2)
+#         base_angle = math.atan2(dy, dx)
         
-        radial_fallback = p - base_center
-        curve_points = []
+#         radial_fallback = p - base_center
+#         curve_points = []
         
-        # Approach sequence (descending vertically)
-        for step in [3, 2, 1]:
-            approach_z = p.Z + (step * 33.3) 
-            curve_points.append(rg.Point3d(p.X, p.Y, approach_z))
+#         # Approach sequence (descending vertically)
+#         for step in [3, 2, 1]:
+#             approach_z = p.Z + (step * 33.3) 
+#             curve_points.append(rg.Point3d(p.X, p.Y, approach_z))
             
-        curve_points.append(p)
+#         curve_points.append(p)
             
-        # Spiral structural sweep points
-        spiral_points = []
-        for i in range(samples + 1):
-            t = i / float(samples)
-            z = base_center.Z + (t * target_height)
+#         # Spiral structural sweep points
+#         spiral_points = []
+#         for i in range(samples + 1):
+#             t = i / float(samples)
+#             z = base_center.Z + (t * target_height)
             
-            total_spiral_angle = spiral_turns * 2 * math.pi
-            current_angle = base_angle + (t * total_spiral_angle)
+#             total_spiral_angle = spiral_turns * 2 * math.pi
+#             current_angle = base_angle + (t * total_spiral_angle)
             
-            profile_envelope = math.sin(t * math.pi)
+#             profile_envelope = math.sin(t * math.pi)
             
-            # --- MODIFIED FOR OUTWARD INCLINATION ---
-            # Instead of shrinking inward to 23mm, we maintain or increase the envelope space
-            # to lean the strands outward as they gain vertical height.
-            inclination_factor = 1.0 + (t * 0.4) # Adjust 0.4 to tilt more or less out
-            tapered_radius = start_radius * inclination_factor
+#             # --- MODIFIED FOR OUTWARD INCLINATION ---
+#             # Instead of shrinking inward to 23mm, we maintain or increase the envelope space
+#             # to lean the strands outward as they gain vertical height.
+#             inclination_factor = 1.0 + (t * 0.4) # Adjust 0.4 to tilt more or less out
+#             tapered_radius = start_radius * inclination_factor
             
-            current_radius = tapered_radius + (amp * profile_envelope)
-            current_radius += (amp * 0.3) * math.sin(t * freq * math.pi * 2)
+#             current_radius = tapered_radius + (amp * profile_envelope)
+#             current_radius += (amp * 0.3) * math.sin(t * freq * math.pi * 2)
             
-            x = base_center.X + current_radius * math.cos(current_angle)
-            y = base_center.Y + current_radius * math.sin(current_angle)
+#             x = base_center.X + current_radius * math.cos(current_angle)
+#             y = base_center.Y + current_radius * math.sin(current_angle)
             
-            spiral_points.append(rg.Point3d(x, y, z))
+#             spiral_points.append(rg.Point3d(x, y, z))
             
-        curve_points.extend(spiral_points)
+#         curve_points.extend(spiral_points)
         
-        # Build and add the main curve geometry to Rhino
-        curve_geom = rg.Curve.CreateInterpolatedCurve(curve_points, 3)
-        curve_id = rs.AddInterpCurve(curve_points)
-        curves_out.append(curve_id)
+#         # Build and add the main curve geometry to Rhino
+#         curve_geom = rg.Curve.CreateInterpolatedCurve(curve_points, 3)
+#         curve_id = rs.AddInterpCurve(curve_points)
+#         curves_out.append(curve_id)
         
-        # Extract perfectly vertical toolplanes along the active printing path
-        if curve_geom:
-            total_divisions = len(curve_points) * 2
-            t_params = curve_geom.DivideByCount(total_divisions, True)
+#         # Extract perfectly vertical toolplanes along the active printing path
+#         if curve_geom:
+#             total_divisions = len(curve_points) * 2
+#             t_params = curve_geom.DivideByCount(total_divisions, True)
             
-            for t_val in t_params:
-                tangent = curve_geom.TangentAt(t_val)
-                pt = curve_geom.PointAt(t_val)
+#             for t_val in t_params:
+#                 tangent = curve_geom.TangentAt(t_val)
+#                 pt = curve_geom.PointAt(t_val)
                 
-                printing_plane = build_upright_travel_plane(pt, tangent, radial_fallback)
-                planes_out.append(printing_plane)
+#                 printing_plane = build_upright_travel_plane(pt, tangent, radial_fallback)
+#                 planes_out.append(printing_plane)
         
-        # ---------------------------------------------------------
-        # PHASE 3: DYNAMIC EXIT PLANES
-        # ---------------------------------------------------------
-        if len(spiral_points) > 0:
-            top_pt = spiral_points[-1]
+#         # ---------------------------------------------------------
+#         # PHASE 3: DYNAMIC EXIT PLANES
+#         # ---------------------------------------------------------
+#         if len(spiral_points) > 0:
+#             top_pt = spiral_points[-1]
             
-            next_index = (n + 1) % num
-            next_base_pt = start_points[next_index]
-            next_approach_start = rg.Point3d(next_base_pt.X, next_base_pt.Y, next_base_pt.Z + 100.0)
+#             next_index = (n + 1) % num
+#             next_base_pt = start_points[next_index]
+#             next_approach_start = rg.Point3d(next_base_pt.X, next_base_pt.Y, next_base_pt.Z + 100.0)
             
-            target_vector = next_approach_start - top_pt
-            exit_dir = rg.Vector3d(target_vector.X, target_vector.Y, 0.0)
+#             target_vector = next_approach_start - top_pt
+#             exit_dir = rg.Vector3d(target_vector.X, target_vector.Y, 0.0)
             
-            if n == num - 1:
-                exit_dir = top_pt - base_center
-                exit_dir.Z = 0.0
+#             if n == num - 1:
+#                 exit_dir = top_pt - base_center
+#                 exit_dir.Z = 0.0
             
-            exit_dir.Unitize()
+#             exit_dir.Unitize()
             
-            for step in [1, 2]:
-                exit_pt = top_pt + (exit_dir * (step * 50.0))
-                exit_plane = build_upright_travel_plane(exit_pt, exit_dir, radial_fallback)
-                planes_out.append(exit_plane)
+#             for step in [1, 2]:
+#                 exit_pt = top_pt + (exit_dir * (step * 50.0))
+#                 exit_plane = build_upright_travel_plane(exit_pt, exit_dir, radial_fallback)
+#                 planes_out.append(exit_plane)
                     
-    return curves_out, planes_out
+#     return curves_out, planes_out
 
 # --------------------------------------------------
 # Graph construction
